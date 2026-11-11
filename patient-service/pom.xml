@@ -100,6 +100,13 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-grpc-client</artifactId>
         </dependency>
+
+        <!-- Kafka Dependency -->
+        <!-- Kafka: the starter brings spring-kafka + Spring Boot's auto-configuration (creates KafkaTemplate) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-kafka</artifactId>
+        </dependency>
     </dependencies>
 
     <build>
