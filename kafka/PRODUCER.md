@@ -37,7 +37,7 @@ PatientService.createPatient()
 - **Kafka** = a *fact* ("patient created") that any number of services can react to
   later. patient-service doesn't know or care who listens.
 
-The event is sent as **protobuf bytes** (`byte[]`), defined by `patient-event.proto`.
+The event is sent as **protobuf bytes** (`byte[]`), defined by `patient_event.proto`.
 
 ---
 
@@ -46,7 +46,7 @@ The event is sent as **protobuf bytes** (`byte[]`), defined by `patient-event.pr
 | File | Purpose |
 |---|---|
 | `patient-service/pom.xml` | `spring-boot-starter-kafka` dependency + protobuf plugin |
-| `patient-service/src/main/proto/patient-event.proto` | Shape of the event (shared contract) |
+| `patient-service/src/main/proto/patient_event.proto` | Shape of the event (shared contract) |
 | `patient-service/src/main/java/.../kafka/KafkaProducer.java` | Builds and sends the event |
 | `patient-service/src/main/java/.../service/PatientService.java` | Calls `kafkaProducer.sendEvent(...)` |
 | `patient-service/src/main/resources/application.properties` | Serializer settings |
@@ -78,7 +78,7 @@ Java class for the event - nothing extra needed.
 
 ## 2. The event contract (`.proto`)
 
-`patient-service/src/main/proto/patient-event.proto`
+`patient-service/src/main/proto/patient_event.proto`
 
 ```protobuf
 syntax = "proto3";
@@ -103,7 +103,7 @@ On `mvn compile` it generates (in `target/generated-sources/protobuf/java/patien
 | Class | What it is |
 |---|---|
 | `PatientEvent` | The message - has `newBuilder()`, `toByteArray()`, `parseFrom()` |
-| `PatientEventOuterClass` | File metadata only (protoc renames it because the file name `patient-event` would clash with the message name) |
+| `PatientEventOuterClass` | File metadata only (protoc renames it because the file name `patient_event` would clash with the message name) |
 
 Rules:
 - **Never change or reuse a field number** (`= 1`, `= 2` ...) - old events in Kafka still use them. Add new fields with new numbers.

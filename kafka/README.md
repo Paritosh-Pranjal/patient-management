@@ -4,6 +4,7 @@ How Kafka is run for this project: **locally** (a single Docker container create
 IntelliJ's Docker run configuration) and how that differs from **production**.
 
 > How patient-service **publishes events** to Kafka: see [PRODUCER.md](PRODUCER.md).
+> How analytics-service **consumes** them: see [CONSUMER.md](CONSUMER.md).
 
 - [Why Kafka here](#why-kafka-here)
 - [Local setup (IntelliJ)](#local-setup-intellij)
