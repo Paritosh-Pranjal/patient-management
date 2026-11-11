@@ -1,0 +1,173 @@
+# syntax=docker/dockerfile:1
+# =============================================================================
+# patient-service - PRODUCTION Dockerfile (multi-stage, layered, non-root)
+#
+# Use it:
+#   docker build -f Dockerfile.commented -t patient-service:1.0.0 .
+#   (run from the patient-service folder; or rename this file to "Dockerfile")
+#
+# What makes it production-ready compared to the basic Dockerfile:
+#   1. Multi-stage   -> final image has only a JRE + the app (no Maven, no source).
+#   2. Maven cache   -> dependencies are cached between builds (much faster).
+#   3. Layered jar   -> dependencies and your code are separate image layers, so a
+#                       code change ships a few KB instead of the whole ~60 MB jar.
+#   4. Non-root user -> the app cannot modify the image if it is ever compromised.
+#   5. JVM tuned for containers -> respects the container memory limit and
+#                       restarts cleanly on OutOfMemoryError.
+#   6. No secrets baked in -> DB URL / user / password are given at RUN time.
+#
+# The first line "# syntax=docker/dockerfile:1" enables BuildKit features like
+# "RUN --mount=type=cache". Docker Desktop and IntelliJ use BuildKit by default.
+# =============================================================================
+
+
+# =============================== STAGE 1: BUILD ==============================
+# Full Maven + JDK image, used only to compile. Pin exact versions (never
+# "latest") so a rebuild next month produces the same result.
+# Java 21 compiles the Java 17 code set in pom.xml (<java.version>17) fine.
+FROM maven:3.9.9-eclipse-temurin-21 AS builder
+
+WORKDIR /app
+
+# 1) Copy ONLY pom.xml and download dependencies.
+#    Docker caches layers: while pom.xml is unchanged, this step is skipped.
+#    --mount=type=cache keeps ~/.m2 between builds even when pom.xml changes,
+#    so only NEW dependencies are downloaded.
+COPY pom.xml .
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn -B -q dependency:go-offline
+
+# 2) Copy the source and build the jar.
+#    -DskipTests: tests should run in your CI pipeline, not here. Spring tests
+#    like contextLoads need Postgres, which is not reachable during "docker build".
+COPY src ./src
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn -B -q clean package -DskipTests
+
+# 3) Give the jar a fixed name, whatever the version in pom.xml is
+#    (target/ has exactly one *.jar; Spring's backup is *.jar.original).
+#    Then split it into layers with Spring Boot's built-in "jarmode=tools":
+#      extracted/dependencies          third-party libs (change rarely)
+#      extracted/spring-boot-loader    Spring's launcher (changes rarely)
+#      extracted/snapshot-dependencies -SNAPSHOT libs (change sometimes)
+#      extracted/application           YOUR code + application.jar (changes often)
+RUN cp target/*.jar application.jar \
+ && java -Djarmode=tools -jar application.jar extract --layers --destination extracted
+
+
+# =============================== STAGE 2: RUN ================================
+# Small runtime image: JRE only (no compiler). "openjdk" images were removed
+# from Docker Hub - eclipse-temurin is the maintained replacement.
+# For maximum reproducibility you can pin a digest:
+#   FROM eclipse-temurin:21-jre@sha256:<digest>   (docker images --digests)
+FROM eclipse-temurin:21-jre AS runner
+
+# Create an unprivileged system user. Containers run as root by default.
+RUN groupadd --system spring \
+ && useradd --system --gid spring --no-create-home --shell /usr/sbin/nologin spring
+
+WORKDIR /application
+
+# Copy layers least-changing first, so Docker reuses the big dependency layers
+# and only re-ships the small "application" layer when your code changes.
+# --chown makes the files owned by the non-root user.
+COPY --from=builder --chown=spring:spring /app/extracted/dependencies/ ./
+COPY --from=builder --chown=spring:spring /app/extracted/spring-boot-loader/ ./
+COPY --from=builder --chown=spring:spring /app/extracted/snapshot-dependencies/ ./
+COPY --from=builder --chown=spring:spring /app/extracted/application/ ./
+
+# From here on everything (including the app) runs as "spring", not root.
+USER spring
+
+# JVM settings for containers (read automatically by the JVM at startup):
+#   MaxRAMPercentage=75     heap = 75% of the container memory limit (-m / k8s limits)
+#   ExitOnOutOfMemoryError  crash fast on OOM so Docker/Kubernetes restarts it,
+#                           instead of a half-dead app
+# Override at run time:  -e JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=60"
+ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError"
+
+# Documents the port (server.port=4000 in application.properties).
+# EXPOSE does NOT publish it - "-p 4000:4000" at run time does.
+EXPOSE 4000
+
+# Optional HEALTHCHECK - needs spring-boot-starter-actuator in pom.xml first.
+# (Kubernetes ignores this; it uses its own liveness/readiness probes.)
+# HEALTHCHECK --interval=30s --timeout=3s --start-period=60s --retries=3 \
+#   CMD curl -fs http://localhost:4000/actuator/health || exit 1
+
+# Exec (JSON) form: java runs as PID 1 and receives SIGTERM directly, so
+# "docker stop" shuts Spring down gracefully. Do NOT use "sh -c java ...".
+ENTRYPOINT ["java", "-jar", "application.jar"]
+
+
+# =============================================================================
+# RUNNING IT (same setup as the IntelliJ run configurations)
+# =============================================================================
+#
+# 1) Network, created once. Containers on it reach each other by CONTAINER NAME.
+#      docker network create internal
+#
+# 2) Postgres
+#      docker run -d --name patient-service-db --network internal \
+#        --restart unless-stopped \
+#        -e POSTGRES_USER=admin_viewer \
+#        -e POSTGRES_PASSWORD=password \
+#        -e POSTGRES_DB=db \
+#        -v "/Users/paritosh/Desktop/Intellij Project Java/db_volumes/patient-service-db:/var/lib/postgresql" \
+#        -p 5432:5432 \
+#        postgres:18
+#
+#    - Volume = host_path:container_path, ONE ":" between them (spaces are fine).
+#    - Postgres 18+: mount /var/lib/postgresql (data goes to .../18/docker).
+#      Postgres 17 and older: mount /var/lib/postgresql/data.
+#    - Pin "postgres:18", not "latest", so a new major version can't break the data dir.
+#    - Port 5000 on macOS is used by AirPlay Receiver -> use 5432.
+#    - In production, drop "-p 5432:5432": only the app needs the DB, and it
+#      reaches it through the network. Don't expose the DB to the outside.
+#
+# 3) App
+#      docker build -f Dockerfile.commented -t patient-service:1.0.0 .
+#      docker run -d --name patient-service --network internal \
+#        --restart unless-stopped -m 512m \
+#        -p 4000:4000 \
+#        -e SPRING_DATASOURCE_URL=jdbc:postgresql://patient-service-db:5432/db \
+#        -e SPRING_DATASOURCE_USERNAME=admin_viewer \
+#        -e SPRING_DATASOURCE_PASSWORD=password \
+#        -e SPRING_JPA_HIBERNATE_DDL_AUTO=update \
+#        -e SPRING_SQL_INIT_MODE=always \
+#        patient-service:1.0.0
+#
+#    - Env vars override application.properties
+#      (SPRING_DATASOURCE_URL = spring.datasource.url).
+#    - Inside a container "localhost" is the container itself -> use the DB
+#      container name and its internal port 5432.
+#    - -m 512m sets the memory limit that MaxRAMPercentage is calculated from.
+#
+# =============================================================================
+# PRODUCTION CHECKLIST (things the Dockerfile cannot do for you)
+# =============================================================================
+#   [ ] Tag images with a version (patient-service:1.0.0), never deploy "latest".
+#   [ ] Secrets: don't type real passwords into docker run or commit them.
+#       Use an env file kept out of git (--env-file prod.env), Docker/K8s secrets,
+#       or a secret manager (AWS Secrets Manager, Vault, ...).
+#   [ ] SPRING_JPA_HIBERNATE_DDL_AUTO=validate (not update) - "update" can alter
+#       or break production tables. Manage schema with Flyway or Liquibase.
+#   [ ] SPRING_SQL_INIT_MODE=never - data.sql seed data is for development only.
+#   [ ] Add spring-boot-starter-actuator for /actuator/health, then enable the
+#       HEALTHCHECK above (or Kubernetes probes).
+#   [ ] Add a .dockerignore next to this file so the build context stays small:
+#         target/
+#         .idea/
+#         *.iml
+#         .git/
+#         HELP.md
+#   [ ] Scan the image for vulnerabilities:  docker scout cves patient-service:1.0.0
+#   [ ] Back up the Postgres volume (pg_dump) - a container is not a backup.
+#
+# Handy commands:
+#   docker ps                                   # running containers + ports
+#   docker logs -f patient-service              # follow app logs
+#   docker exec -it patient-service-db psql -U admin_viewer -d db   # SQL shell
+#   docker exec patient-service id              # should print uid=...(spring)
+#   docker image prune                          # remove dangling old images
+# =============================================================================

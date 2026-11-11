@@ -1,0 +1,24 @@
+# Build output
+target/
+build/
+
+# IntelliJ IDEA (holds local run configs and DB connection settings)
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Maven wrapper binary (downloaded on first run)
+.mvn/wrapper/maven-wrapper.jar
+
+# Local Docker volumes / data
+db_volumes/
+
+# Environment files with real secrets
+.env
+*.env
+
+# OS / editors
+.DS_Store
+.vscode/
