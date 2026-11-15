@@ -1,0 +1,34 @@
+server:
+  port: 4004
+
+spring:
+  cloud:
+    gateway:
+      server:
+        webflux:
+          routes:
+            ## http://localhost:4004/auth/login -> http://auth-service:4005/auth/login
+            - id: auth-service-route
+              uri: http://auth-service:4005
+              predicates:
+                - Path=/auth/**
+              filters:
+                - StripPrefix=1
+            ## REST Client -> http://localhost:4004/api/patients
+            ## API Gateway -> http://patient-service:4000/patients
+            ## Patient Service (Spring boot app) -> /patients -> Patients Array
+            - id: patient-service-route
+              uri: http://patient-service:4000
+              predicates:
+                - Path=/api/patients/**
+              filters:
+                - StripPrefix=1
+
+            ## REST Client -> http://localhost:4004/api-docs/patients
+            ## API Gateway -> http://patient-service:4000/v3/api-docs
+            - id: api-docs-patient-route
+              uri: http://patient-service:4000
+              predicates:
+                - Path=/api-docs/patientsv
+              filters:
+                - RewritePath=/api-docs/patients,/v3/api-docs
