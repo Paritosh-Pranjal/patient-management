@@ -1,6 +1,10 @@
 server:
   port: 4004
 
+auth:
+  service:
+    url: http://auth-service:4005
+
 spring:
   cloud:
     gateway:
@@ -14,6 +18,7 @@ spring:
                 - Path=/auth/**
               filters:
                 - StripPrefix=1
+
             ## REST Client -> http://localhost:4004/api/patients
             ## API Gateway -> http://patient-service:4000/patients
             ## Patient Service (Spring boot app) -> /patients -> Patients Array
@@ -23,12 +28,20 @@ spring:
                 - Path=/api/patients/**
               filters:
                 - StripPrefix=1
+                - JwtValidation
 
             ## REST Client -> http://localhost:4004/api-docs/patients
             ## API Gateway -> http://patient-service:4000/v3/api-docs
             - id: api-docs-patient-route
               uri: http://patient-service:4000
               predicates:
-                - Path=/api-docs/patientsv
+                - Path=/api-docs/patients
               filters:
                 - RewritePath=/api-docs/patients,/v3/api-docs
+
+            - id: api-docs-auth-route
+              uri: http://auth-service:4005
+              predicates:
+                - Path=/api-docs/auth
+              filters:
+                - RewritePath=/api-docs/auth,/v3/api-docs
