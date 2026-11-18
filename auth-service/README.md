@@ -215,10 +215,9 @@ GET http://localhost:4004/auth/validate
 Authorization: Bearer {{token}}
 ```
 
-> The committed `.http` files currently call `http://localhost:4004/login` and
-> `/validate` (without `/auth`), which the gateway doesn't route - use the `/auth/...`
-> paths above. Also keep a **single** space after `Bearer`, because the controller
-> takes `substring(7)`.
+> Keep the `/auth` prefix - the gateway only routes `/auth/**` to auth-service
+> (`/login` alone returns 404). Keep a **single** space after `Bearer`, because the
+> controller takes `substring(7)`.
 
 Or directly against the service (skipping the gateway) - needs `-p 4005:4005` on the container:
 
